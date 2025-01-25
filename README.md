@@ -30,40 +30,36 @@ Because of how this strategy works you need a little bit more setup than other s
 You will need to have some email service configured in your application. What you actually use to send emails is not important, as far as you can create a function with this type:
 
 ```ts
-type SendEmailOptions<User> = {
-  emailAddress: string
-  magicLink: string
-  user?: User | null
-  domainUrl: string
-  form: FormData
-}
+type SendEmailOptions = {
+  email: string;
+  magicLink: string;
+};
 
-type SendEmailFunction<User> = {
-  (options: SendEmailOptions<User>): Promise<void>
-}
+type SendEmailFunction = (options: SendEmailOptions) => void | Promise<void>;
 ```
 
 So if you have something like `app/services/email-provider.server.ts` file exposing a generic function like `sendEmail` function receiving an email address, subject and body, you could use it like this:
 
 ```tsx
 // app/services/email.server.tsx
-import { renderToString } from 'react-dom/server'
-import type { SendEmailFunction } from 'remix-auth-email-link'
-import type { User } from '~/models/user.model'
-import * as emailProvider from '~/services/email-provider.server'
+import { renderToString } from "react-dom/server";
+import type { SendEmailFunction } from "@nichtsam/remix-auth-email-link";
+import { type User, getUserByEmail } from "~/models/user.model";
+import * as emailProvider from "~/services/email-provider.server";
 
-export let sendEmail: SendEmailFunction<User> = async (options) => {
-  let subject = "Here's your Magic sign-in link"
+export let sendEmail: SendEmailFunction = async (options) => {
+  let user = getUserByEmail(option.emal);
+  let subject = "Here's your Magic sign-in link";
   let body = renderToString(
     <p>
-      Hi {options.user?.name || 'there'},<br />
+      Hi {user?.name || "there"},<br />
       <br />
       <a href={options.magicLink}>Click here to login on example.app</a>
-    </p>
-  )
+    </p>,
+  );
 
-  await emailProvider.sendEmail(options.emailAddress, subject, body)
-}
+  await emailProvider.sendEmail(options.email, subject, body);
+};
 ```
 
 Again, what you use as email provider is not important, you could use a third party service like [Mailgun](https://mailgun.com) or [Sendgrid](https://sendgrid.com), if you are using AWS you could use SES.
@@ -74,42 +70,31 @@ Now that you have your sendEmail email function you can create an instance of th
 
 ```ts
 // app/services/auth.server.ts
-import { Authenticator } from 'remix-auth'
-import { EmailLinkStrategy } from 'remix-auth-email-link'
-import { sessionStorage } from '~/services/session.server'
-import { sendEmail } from '~/services/email.server'
-import { User, getUserByEmail } from '~/models/user.server'
+import { Authenticator } from "remix-auth";
+import { EmailLinkStrategy } from "@nichtsam/remix-auth-email-link";
+import { sessionStorage } from "~/services/session.server";
+import { sendEmail } from "~/services/email.server";
+import { User, getUserByEmail } from "~/models/user.server";
 
 // This secret is used to encrypt the token sent in the magic link and the
 // session used to validate someone else is not trying to sign-in as another
 // user.
-let secret = process.env.MAGIC_LINK_SECRET
-if (!secret) throw new Error('Missing MAGIC_LINK_SECRET env variable.')
+let secret = process.env.MAGIC_LINK_SECRET;
+if (!secret) throw new Error("Missing MAGIC_LINK_SECRET env variable.");
 
-export let auth = new Authenticator<User>(sessionStorage)
+export let auth = new Authenticator<User>(sessionStorage);
 
-// Here we need the sendEmail, the secret and the URL where the user is sent
-// after clicking on the magic link
 auth.use(
   new EmailLinkStrategy(
-    { sendEmail, secret, callbackURL: '/magic' },
-    // In the verify callback,
-    // you will receive the email address, form data and whether or not this is being called after clicking on magic link
-    // and you should return the user instance
-    async ({
-      email,
-      form,
-      magicLinkVerify,
-    }: {
-      email: string
-      form: FormData
-      magicLinkVerify: boolean
-    }) => {
-      let user = await getUserByEmail(email)
-      return user
-    }
-  )
-)
+    { sendEmail, secret, magicEndpoint: "https://example.app/auth/magic" },
+    async ({ email }) => {
+      // here you can use the params above to get the user and return it
+      // what you do inside this and how you find the user is up to you
+      let user = await getUserByEmail(email);
+      return user;
+    },
+  ),
+);
 ```
 
 ### Setup your routes
@@ -118,46 +103,40 @@ Now you can proceed to create your routes and do the setup.
 
 ```tsx
 // app/routes/login.tsx
-import { ActionArgs, LoaderArgs } from '@remix-run/node'
-import { json } from '@remix-run/node'
-import { Form, useLoaderData } from '@remix-run/react'
-import { auth } from '~/services/auth.server'
-import { sessionStorage } from '~/services/session.server'
+import { ActionArgs, LoaderArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Form, useLoaderData } from "@remix-run/react";
+import { Cookie } from "@mjackson/headers";
+import { auth } from "~/services/auth.server";
 
 export let loader = async ({ request }: LoaderArgs) => {
-  await auth.isAuthenticated(request, { successRedirect: '/me' })
-  let session = await sessionStorage.getSession(request.headers.get('Cookie'))
-  // This session key `auth:magiclink` is the default one used by the EmailLinkStrategy
-  // you can customize it passing a `sessionMagicLinkKey` when creating an
-  // instance.
+  await auth.isAuthenticated(request, { successRedirect: "/me" });
+
   return json({
-    magicLinkSent: session.has('auth:magiclink'),
-    magicLinkEmail: session.get('auth:email'),
-  })
-}
+    magicLinkSent: new Cookie(request.headers.get("cookie") ?? "").has(this.cookieName),
+  });
+};
 
 export let action = async ({ request }: ActionArgs) => {
-  // The success redirect is required in this action, this is where the user is
-  // going to be redirected after the magic link is sent, note that here the
-  // user is not yet authenticated, so you can't send it to a private page.
-  await auth.authenticate('email-link', request, {
-    successRedirect: '/login',
-    // If this is not set, any error will be throw and the ErrorBoundary will be
-    // rendered.
-    failureRedirect: '/login',
-  })
-}
+ // A `Headers` object containing the `Set-Cookie` header with the token will be thrown.
+ // You need to catch this and decide whether to include the cookie in your response.
+ // Note that the token cookie is required if `shouldValidateSessionMagicLink` is enabled.
+ // While this approach might seem suboptimal, it provides flexibility in customizing your response logic.
+  const headers = await authenticator
+    .authenticate("email-link", request)
+    .catch((headers) => headers);
+  throw redirect("/login", { headers });
+};
 
 // app/routes/login.tsx
 export default function Login() {
-  let { magicLinkSent, magicLinkEmail } = useLoaderData<typeof loader>()
+  let { magicLinkSent } = useLoaderData<typeof loader>();
 
   return (
     <Form action="/login" method="post">
       {magicLinkSent ? (
         <p>
-          Successfully sent magic link{' '}
-          {magicLinkEmail ? `to ${magicLinkEmail}` : ''}
+          Successfully sent magic link{
         </p>
       ) : (
         <>
@@ -170,182 +149,42 @@ export default function Login() {
         </>
       )}
     </Form>
-  )
+  );
 }
 ```
 
 ```tsx
 // app/routes/magic.tsx
-import { LoaderArgs } from '@remix-run/node'
-import { auth } from '~/services/auth.server'
+import { LoaderArgs } from "@remix-run/node";
+import { auth } from "~/services/auth.server";
 
 export let loader = async ({ request }: LoaderArgs) => {
-  await auth.authenticate('email-link', request, {
-    // If the user was authenticated, we redirect them to their profile page
-    // This redirect is optional, if not defined the user will be returned by
-    // the `authenticate` function and you can render something on this page
-    // manually redirect the user.
-    successRedirect: '/me',
-    // If something failed we take them back to the login page
-    // This redirect is optional, if not defined any error will be throw and
-    // the ErrorBoundary will be rendered.
-    failureRedirect: '/login',
-  })
-}
-```
-
-```tsx
-// app/routes/me.tsx
-import { LoaderArgs } from '@remix-run/node'
-import { json } from '@remix-run/node'
-import { useLoaderData } from '@remix-run/react'
-import { auth } from '~/services/auth.server'
-
-export let loader = async ({ request }: LoaderArgs) => {
-  // If the user is here, it's already authenticated, if not redirect them to
-  // the login page.
-  let user = await auth.isAuthenticated(request, { failureRedirect: '/login' })
-  return json({ user })
-}
-
-export default function Me() {
-  let { user } = useLoaderData<typeof loader>()
-  return (
-    <div>
-      <h1>Welcome {user.name}</h1>
-      <p>You are logged in as {user.email}</p>
-    </div>
-  )
-}
+  const user = await auth.authenticate("email-link", request);
+  // now you have the user object with the data you returned in the verify function
+};
 ```
 
 ## Email validation
 
 The EmailLinkStrategy also supports email validation, this is useful if you want to prevent someone from signing-in with a disposable email address or you have some denylist of emails for some reason.
 
-By default, the EmailStrategy will validate every email against the regular expression `/.+@.+/`, if it doesn't pass it will throw an error.
+By default, the EmailStrategy will validate every email against the regular expression `/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/`, if it doesn't pass it will throw an error.
 
 If you want to customize it you can create a function with this type and pass it to the EmailLinkStrategy.
 
 ```ts
-type VerifyEmailFunction = {
-  (email: string): Promise<void>
-}
+type ValidateEmailFunction = (email: string) => boolean | Promise<boolean>;
 ```
 
 ### Example
 
 ```ts
 // app/services/verifier.server.ts
-import { VerifyEmailFunction } from 'remix-auth-email-link'
-import { isEmailBurner } from 'burner-email-providers'
-import isEmail from 'validator/lib/isEmail'
+import { VerifyEmailFunction } from "remix-auth-email-link";
+import { isEmailBurner } from "burner-email-providers";
+import isEmail from "validator/lib/isEmail";
 
 export let verifyEmailAddress: VerifyEmailFunction = async (email) => {
-  if (!isEmail(email)) throw new Error('Invalid email address.')
-  if (isEmailBurner(email)) throw new Error('Email not allowed.')
-}
-```
-
-```ts
-// app/services/auth.server.ts
-import { Authenticator } from 'remix-auth'
-import { Authenticator, EmailLinkStrategy } from 'remix-auth-email-link'
-import { sessionStorage } from '~/services/session.server'
-import { sendEmail } from '~/services/email.server'
-import { User, getUserByEmail } from '~/models/user.model'
-import { verifyEmailAddress } from '~/services/verifier.server'
-
-// This secret is used to encrypt the token sent in the magic link and the
-// session used to validate someone else is not trying to sign-in as another
-// user.
-let secret = process.env.MAGIC_LINK_SECRET
-if (!secret) throw new Error('Missing MAGIC_LINK_SECRET env variable.')
-
-let auth = new Authenticator<User>(sessionStorage)
-
-// Here we need the sendEmail, the secret and the URL where the user is sent
-// after clicking on the magic link
-auth.use(
-  new EmailLinkStrategy(
-    { verifyEmailAddress, sendEmail, secret, callbackURL: '/magic' },
-    // In the verify callback you will only receive the email address and you
-    // should return the user instance
-    async ({ email }: { email: string }) => {
-      let user = await getUserByEmail(email)
-      return user
-    }
-  )
-)
-```
-
-## Options options
-
-The EmailLinkStrategy supports a few more optional configuration options you can set. Here's the whole type with each option commented.
-
-```ts
-type EmailLinkStrategyOptions<User> = {
-  /**
-   * The endpoint the user will go after clicking on the email link.
-   * A whole URL is not required, the pathname is enough, the strategy will
-   * detect the host of the request and use it to build the URL.
-   * @default "/magic"
-   */
-  callbackURL?: string
-  /**
-   * A function to send the email. This function should receive the email
-   * address of the user and the URL to redirect to and should return a Promise.
-   * The value of the Promise will be ignored.
-   */
-  sendEmail: SendEmailFunction<User>
-  /**
-   * A function to validate the email address. This function should receive the
-   * email address as a string and return a Promise. The value of the Promise
-   * will be ignored, in case of error throw an error.
-   *
-   * By default it only test the email against the RegExp `/.+@.+/`.
-   */
-  verifyEmailAddress?: VerifyEmailFunction
-  /**
-   * A secret string used to encrypt and decrypt the token and magic link.
-   */
-  secret: string
-  /**
-   * The name of the form input used to get the email.
-   * @default "email"
-   */
-  emailField?: string
-  /**
-   * The param name the strategy will use to read the token from the email link.
-   * @default "token"
-   */
-  magicLinkSearchParam?: string
-  /**
-   * How long the magic link will be valid. Default to 30 minutes.
-   * @default 1_800_000
-   */
-  linkExpirationTime?: number
-  /**
-   * The key on the session to store any error message.
-   * @default "auth:error"
-   */
-  sessionErrorKey?: string
-  /**
-   * The key on the session to store the magic link.
-   * @default "auth:magiclink"
-   */
-  sessionMagicLinkKey?: string
-  /**
-   * Add an extra layer of protection and validate the magic link is valid.
-   * @default false
-   */
-  validateSessionMagicLink?: boolean
-
-  /**
-   * The key on the session to store the email.
-   * It's unset the same time the sessionMagicLinkKey is.
-   * @default "auth:email"
-   */
-  sessionEmailKey?: string
-}
+  return isEmail(email) && !isEmailBurner(email);
+};
 ```

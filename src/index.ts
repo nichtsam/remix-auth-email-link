@@ -1,454 +1,247 @@
-import type { SessionStorage } from '@remix-run/server-runtime'
-import { redirect } from '@remix-run/server-runtime'
-import crypto from 'crypto-js'
-import type { AuthenticateOptions, StrategyVerifyCallback } from 'remix-auth'
-import { Strategy } from 'remix-auth'
+import { Cookie, SetCookie, type SetCookieInit } from "@mjackson/headers";
+import crypto from "crypto-js";
+import { Strategy } from "remix-auth/strategy";
 
-export type SendEmailOptions<User> = {
-  emailAddress: string
-  magicLink: string
-  user?: User | null
-  domainUrl: string
-  form: FormData
-}
+type URLConstructor = ConstructorParameters<typeof URL>[0];
 
-export type SendEmailFunction<User> = {
-  (options: SendEmailOptions<User>): Promise<void>
-}
-
-/**
- * Validate the email address the user is trying to use to login.
- * This can be useful to ensure it's not a disposable email address.
- * @param emailAddress The email address to validate
- */
-export type VerifyEmailFunction = {
-  (email: string): Promise<void>
-}
-
-/**
- * The content of the magic link payload. Keys are minified so that the resulting link is as short as possible.
- */
-export type MagicLinkPayload = {
-  /**
-   * Email address used to authenticate.
-   */
-  e: string
-  /**
-   * Form data received in the request.
-   */
-  f?: Record<string, unknown>
-  /**
-   * Creation date of the magic link, as an ISO string. This is used to check
-   * the email link is still valid.
-   */
-  c: number
-}
-
-/**
- * This interface declares what configuration the strategy needs from the
- * developer to correctly work.
- */
-export type EmailLinkStrategyOptions<User> = {
-  /**
-   * The endpoint the user will go after clicking on the email link.
-   * A whole URL is not required, the pathname is enough, the strategy will
-   * detect the host of the request and use it to build the URL.
-   * @default "/magic"
-   */
-  callbackURL?: string
-  /**
-   * A function to send the email. This function should receive the email
-   * address of the user and the URL to redirect to and should return a Promise.
-   * The value of the Promise will be ignored.
-   */
-  sendEmail: SendEmailFunction<User>
-  /**
-   * A function to validate the email address. This function should receive the
-   * email address as a string and return a Promise. The value of the Promise
-   * will be ignored, in case of error throw an error.
-   *
-   * By default it only test the email against the RegExp `/.+@.+/`.
-   */
-  verifyEmailAddress?: VerifyEmailFunction
-  /**
-   * A secret string used to encrypt and decrypt the token and magic link.
-   */
-  secret: string
-  /**
-   * The name of the form input used to get the email.
-   * @default "email"
-   */
-  emailField?: string
-  /**
-   * The param name the strategy will use to read the token from the email link.
-   * @default "token"
-   */
-  magicLinkSearchParam?: string
-  /**
-   * How long the magic link will be valid. Default to 30 minutes.
-   * @default 1_800_000
-   */
-  linkExpirationTime?: number
-  /**
-   * The key on the session to store any error message.
-   * @default "auth:error"
-   */
-  sessionErrorKey?: string
-  /**
-   * The key on the session to store the magic link.
-   * @default "auth:magiclink"
-   */
-  sessionMagicLinkKey?: string
-  /**
-   * Add an extra layer of protection and validate the magic link is valid.
-   * @default false
-   */
-  validateSessionMagicLink?: boolean
-
-  /**
-   * The key on the session to store the email.
-   * It's unset the same time the sessionMagicLinkKey is.
-   * @default "auth:email"
-   */
-  sessionEmailKey?: string
-}
-
-/**
- * This interface declares what the developer will receive from the strategy
- * to verify the user identity in their system.
- */
-export type EmailLinkStrategyVerifyParams = {
-  email: string
-  form: FormData
-  /**
-   * True, if the verify callback is called after clicking on the magic link
-   */
-  magicLinkVerify: boolean
-}
-
-const verifyEmailAddress: VerifyEmailFunction = async (email) => {
-  if (!/.+@.+/u.test(email)) {
-    throw new Error('A valid email is required.')
-  }
-}
+export const NAME = "email-link";
 
 export class EmailLinkStrategy<User> extends Strategy<
   User,
-  EmailLinkStrategyVerifyParams
+  EmailLinkStrategy.VerifyOptions
 > {
-  public name = 'email-link'
-
-  private readonly emailField: string = 'email'
-
-  private readonly callbackURL: string
-
-  private readonly sendEmail: SendEmailFunction<User>
-
-  private readonly validateEmail: VerifyEmailFunction
-
-  private readonly secret: string
-
-  private readonly magicLinkSearchParam: string
-
-  private readonly linkExpirationTime: number
-
-  private readonly sessionErrorKey: string
-
-  private readonly sessionMagicLinkKey: string
-
-  private readonly validateSessionMagicLink: boolean
-
-  private readonly sessionEmailKey: string
+  name = NAME;
+  protected options: Required<EmailLinkStrategy.ConstructorOptions>;
 
   constructor(
-    options: EmailLinkStrategyOptions<User>,
-    verify: StrategyVerifyCallback<User, EmailLinkStrategyVerifyParams>
+    {
+      cookie = { name: NAME },
+      emailField = "email",
+      shouldValidateSessionMagicLink = false,
+      tokenKey = "token",
+      linkMaxAge = 60 * 10,
+      validateEmail = (email: string) =>
+        /^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email),
+      ...restOptions
+    }: EmailLinkStrategy.ConstructorOptions,
+    verify: Strategy.VerifyFunction<User, EmailLinkStrategy.VerifyOptions>,
   ) {
-    super(verify)
-    this.sendEmail = options.sendEmail
-    this.callbackURL = options.callbackURL ?? '/magic'
-    this.secret = options.secret
-    this.sessionErrorKey = options.sessionErrorKey ?? 'auth:error'
-    this.sessionMagicLinkKey = options.sessionMagicLinkKey ?? 'auth:magiclink'
-    this.validateEmail = options.verifyEmailAddress ?? verifyEmailAddress
-    this.emailField = options.emailField ?? this.emailField
-    this.magicLinkSearchParam = options.magicLinkSearchParam ?? 'token'
-    this.linkExpirationTime = options.linkExpirationTime ?? 1000 * 60 * 30 // 30 minutes
-    this.validateSessionMagicLink = options.validateSessionMagicLink ?? false
-    this.sessionEmailKey = options.sessionEmailKey ?? 'auth:email'
+    super(verify);
+
+    this.options = {
+      cookie,
+      emailField,
+      shouldValidateSessionMagicLink,
+      tokenKey,
+      linkMaxAge,
+      validateEmail,
+      ...restOptions,
+    };
   }
 
-  public async authenticate(
-    request: Request,
-    sessionStorage: SessionStorage,
-    options: AuthenticateOptions
-  ): Promise<User> {
-    const session = await sessionStorage.getSession(
-      request.headers.get('Cookie')
-    )
+  private get cookieName() {
+    if (typeof this.options.cookie === "string") {
+      return this.options.cookie || NAME;
+    }
+    return this.options.cookie?.name ?? NAME;
+  }
 
-    const form = new URLSearchParams(await request.text())
-    const formData = new FormData()
+  private get cookieOptions() {
+    if (typeof this.options.cookie !== "object") return {};
+    return this.options.cookie ?? {};
+  }
 
-    // Convert the URLSearchParams to FormData
-    for (const [name, value] of form) {
-      formData.append(name, value)
+  private async createMagicLink(email: string) {
+    const payload = {
+      email,
+      createdAt: Date.now(),
+    };
+
+    const encrypted = await this.encrypt(JSON.stringify(payload));
+    const url = new URL(this.options.magicEndpoint);
+    url.searchParams.set(this.options.tokenKey ?? "token", encrypted);
+    return { magicLink: url.toString(), token: encrypted };
+  }
+
+  private async sendToken(email: string): Promise<Headers> {
+    const valid = await this.options.validateEmail?.(email);
+    if (!valid) {
+      throw new Error("Email is invalid");
     }
 
-    // This should only be called in an action if it's used to start the login process
-    if (request.method === 'POST') {
-      if (!options.successRedirect) {
-        throw new Error(
-          'Missing successRedirect. The successRedirect is required for POST requests.'
-        )
-      }
+    const { magicLink, token } = await this.createMagicLink(email);
 
-      // get the email address from the request body
-      const emailAddress = form.get(this.emailField)
+    await this.options.sendEmail({
+      email,
+      magicLink,
+    });
 
-      // if it doesn't have an email address,
-      if (!emailAddress || typeof emailAddress !== 'string') {
-        const message = 'Missing email address.'
-        if (!options.failureRedirect) {
-          throw new Error(message)
-        }
-        session.flash(this.sessionErrorKey, { message })
-        const cookie = await sessionStorage.commitSession(session)
-        throw redirect(options.failureRedirect, {
-          headers: { 'Set-Cookie': cookie },
-        })
-      }
+    const cookie = new SetCookie({
+      name: this.cookieName,
+      value: new URLSearchParams({
+        [this.options.tokenKey!]: token,
+      }).toString(),
+      httpOnly: true,
+      maxAge: this.options.linkMaxAge!,
+      path: "/",
+      sameSite: "Lax",
+      ...this.cookieOptions,
+    });
 
-      try {
-        // Validate the email address
-        await this.validateEmail(emailAddress)
+    return new Headers({ "Set-Cookie": cookie.toString() });
+  }
 
-        const domainUrl = this.getDomainURL(request)
-
-        const magicLink = await this.sendToken(
-          emailAddress,
-          domainUrl,
-          formData
-        )
-
-        session.set(this.sessionMagicLinkKey, await this.encrypt(magicLink))
-        session.set(this.sessionEmailKey, emailAddress)
-
-        throw redirect(options.successRedirect, {
-          headers: {
-            'Set-Cookie': await sessionStorage.commitSession(session),
-          },
-        })
-      } catch (error) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((error as any).status === 302) {
-          // If it's a redirect, then just throw the redirect as it is
-          throw error
-        }
-        if (!options.failureRedirect) {
-          throw error
-        }
-        const { message } = error as Error
-        session.flash(this.sessionErrorKey, { message })
-        const cookie = await sessionStorage.commitSession(session)
-        throw redirect(options.failureRedirect, {
-          headers: { 'Set-Cookie': cookie },
-        })
-      }
+  private async validateToken(request: Request) {
+    const requestParams = new URL(request.url).searchParams;
+    if (!requestParams.has(this.options.tokenKey!)) {
+      throw new ReferenceError("Missing token on params.");
     }
 
-    let user: User
+    const requestToken = requestParams.get(this.options.tokenKey!) ?? "";
+
+    let payload: {
+      email: string;
+      createdAt: number;
+    };
 
     try {
-      // If we get here, the user clicked on the magic link inside email
-      const magicLink = session.get(this.sessionMagicLinkKey) ?? ''
-      const { emailAddress: email, form } = await this.validateMagicLink(
-        request.url,
-        await this.decrypt(magicLink)
-      )
-      // now that we have the user email we can call verify to get the user
-      user = await this.verify({ email, form, magicLinkVerify: true })
-    } catch (error) {
-      // if something happens, we should redirect to the failureRedirect
-      // and flash the error message, or just throw the error if failureRedirect
-      // is not defined
-      if (!options.failureRedirect) {
-        throw error
+      const decrypted = await this.decrypt(requestToken);
+      payload = JSON.parse(decrypted);
+    } catch (err: unknown) {
+      throw new TypeError("Invalid Token");
+    }
+
+    if (this.options.shouldValidateSessionMagicLink) {
+      const cookieParams = new URLSearchParams(
+        new Cookie(request.headers.get("cookie") ?? "").get(this.cookieName),
+      );
+
+      if (!cookieParams.has(this.options.tokenKey)) {
+        throw new Error(
+          "Missing token on cookie, required by additional security layer.",
+        );
       }
-      const { message } = error as Error
-      session.flash(this.sessionErrorKey, { message })
-      const cookie = await sessionStorage.commitSession(session)
-      throw redirect(options.failureRedirect, {
-        headers: { 'Set-Cookie': cookie },
-      })
+
+      const cookieToken = cookieParams.get(this.options.tokenKey);
+
+      if (requestToken !== cookieToken) {
+        throw new Error("Token doesn't match cookie");
+      }
     }
 
-    if (!options.successRedirect) {
-      return user
+    const expirationTime = payload.createdAt + this.options.linkMaxAge! * 1000;
+    if (Date.now() > expirationTime) {
+      throw new Error("Token expired. Please request a new one.");
     }
 
-    // remove the magic link and email from the session
-    session.unset(this.sessionMagicLinkKey)
-    session.unset(this.sessionEmailKey)
-
-    session.set(options.sessionKey, user)
-    const cookie = await sessionStorage.commitSession(session)
-    throw redirect(options.successRedirect, {
-      headers: { 'Set-Cookie': cookie },
-    })
+    return payload.email;
   }
 
-  public async getMagicLink(
-    emailAddress: string,
-    domainUrl: string,
-    form: FormData
-  ): Promise<string> {
-    const payload = this.createMagicLinkPayload(emailAddress, form)
-    const stringToEncrypt = JSON.stringify(payload)
-    const encryptedString = await this.encrypt(stringToEncrypt)
-    const url = new URL(domainUrl)
-    url.pathname = this.callbackURL
-    url.searchParams.set(this.magicLinkSearchParam, encryptedString)
-    return url.toString()
-  }
+  public async authenticate(request: Request): Promise<User> {
+    const url = new URL(request.url);
+    const token = url.searchParams.get(this.options.tokenKey!);
 
-  private getDomainURL(request: Request): string {
-    const host =
-      request.headers.get('X-Forwarded-Host') ?? request.headers.get('host')
+    if (!token) {
+      const formData = await request.clone().formData();
+      const email = formData.get(this.options.emailField);
+      if (!email) {
+        throw new Error(
+          "Email is required to initiate the authentication process",
+        );
+      }
 
-    if (!host) {
-      throw new Error('Could not determine domain URL.')
+      if (typeof email !== "string") {
+        throw new Error("Email must be a string.");
+      }
+
+      throw await this.sendToken(email);
     }
 
-    const protocol =
-      host.includes('localhost') || host.includes('127.0.0.1')
-        ? 'http'
-        : request.headers.get('X-Forwarded-Proto') ?? 'https'
-
-    return `${protocol}://${host}`
-  }
-
-  private async sendToken(email: string, domainUrl: string, form: FormData) {
-    const magicLink = await this.getMagicLink(email, domainUrl, form)
-
-    const user = await this.verify({
-      email,
-      form,
-      magicLinkVerify: false,
-    }).catch(() => null)
-
-    await this.sendEmail({
-      emailAddress: email,
-      magicLink,
-      user,
-      domainUrl,
-      form,
-    })
-
-    return magicLink
-  }
-
-  private createFormPayload(form: FormData): MagicLinkPayload['f'] {
-    const formKeys = [...form.keys()]
-    return formKeys.length === 1
-      ? undefined
-      : Object.fromEntries(
-          formKeys
-            .filter((key) => key !== this.emailField)
-            .map((key) => [
-              key,
-              form.getAll(key).length > 1 ? form.getAll(key) : form.get(key),
-            ])
-        )
-  }
-
-  private createMagicLinkPayload(
-    emailAddress: string,
-    form: FormData
-  ): MagicLinkPayload {
-    const formPayload = this.createFormPayload(form)
-    return {
-      e: emailAddress,
-      ...(formPayload && { f: formPayload }),
-      c: Date.now(),
-    }
+    const email = await this.validateToken(request);
+    return this.verify({ email });
   }
 
   private async encrypt(value: string): Promise<string> {
-    return crypto.AES.encrypt(value, this.secret).toString()
+    return crypto.AES.encrypt(value, this.options.secret).toString();
   }
 
   private async decrypt(value: string): Promise<string> {
-    const bytes = crypto.AES.decrypt(value, this.secret)
-    return bytes.toString(crypto.enc.Utf8)
+    const bytes = crypto.AES.decrypt(value, this.options.secret);
+    return bytes.toString(crypto.enc.Utf8);
+  }
+}
+
+export namespace EmailLinkStrategy {
+  /**
+   * This interface declares what the developer will receive from the strategy
+   * to verify the user identity in their system.
+   */
+  export interface VerifyOptions {
+    email: string;
   }
 
-  private getMagicLinkCode(link: string) {
-    try {
-      const url = new URL(link)
-      return url.searchParams.get(this.magicLinkSearchParam) ?? ''
-    } catch {
-      return ''
-    }
+  /**
+   * This interface declares what configuration the strategy needs from the
+   * developer to correctly work.
+   */
+  export interface ConstructorOptions {
+    /**
+     * The name of the cookie used to keep email and magic link around.
+     *
+     * The email and magic link are stored in a cookie, and this option
+     * allows you to customize the cookie if needed.
+     * @default "email-link"
+     */
+    cookie?: string | (Omit<SetCookieInit, "value"> & { name: string });
+    /**
+     * A secret string used to encrypt and decrypt the token and magic link.
+     */
+    secret: string;
+    /**
+     * The name of the form input used to get the email.
+     * @default "email"
+     */
+    emailField?: string;
+    /**
+     * The endpoint the user will go after clicking on the email link.
+     */
+    magicEndpoint: URLConstructor;
+    /**
+     * A function to send the email. This function should receive the email address of the user and the magic link.
+     */
+    sendEmail: SendEmailFunction;
+    /**
+     * A function to validate the email address. This function should receive the
+     * email address as a string and return a boolean. An Error will be thrown if the validation fails.
+     *
+     * By default it only test the email against the RegExp `/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/`.
+     */
+    validateEmail?: ValidateEmailFunction;
+    /**
+     * The name the strategy will use to identity the token from the magic link.
+     * @default "auth:email-link:token"
+     */
+    tokenKey?: string;
+    /**
+     * Seconds until the magic link expires. Default to 10 minutes.
+     * @default 600
+     */
+    linkMaxAge?: number;
+    /**
+     * Adds an additional layer of security by validating the magic link.
+     * - When set to `true`, the token attached to the magic link is validated against the value stored in cookies during the authentication process.
+     * - When set to `false`, the cookie value is ignored, and only the token from the magic link is used to verify the user's identity.
+     * @default false
+     */
+    shouldValidateSessionMagicLink?: boolean;
   }
 
-  private async validateMagicLink(
-    requestUrl: string,
-    sessionMagicLink?: string
-  ) {
-    const linkCode = this.getMagicLinkCode(requestUrl)
-    const sessionLinkCode = sessionMagicLink
-      ? this.getMagicLinkCode(sessionMagicLink)
-      : null
+  type SendEmailOptions = {
+    email: string;
+    magicLink: string;
+  };
 
-    let emailAddress
-    let linkCreationTime
-    let form: Record<string, unknown>
-    try {
-      const decryptedString = await this.decrypt(linkCode)
-      const payload = JSON.parse(decryptedString) as MagicLinkPayload
-      emailAddress = payload.e
-      form = payload.f ?? {}
-      form[this.emailField] = emailAddress
-      linkCreationTime = payload.c
-    } catch (error: unknown) {
-      console.error(error)
-      throw new Error('Sign in link invalid. Please request a new one.')
-    }
+  type SendEmailFunction = (options: SendEmailOptions) => void | Promise<void>;
 
-    if (typeof emailAddress !== 'string') {
-      throw new TypeError('Sign in link invalid. Please request a new one.')
-    }
-
-    if (this.validateSessionMagicLink) {
-      if (!sessionLinkCode) {
-        throw new Error('Sign in link invalid. Please request a new one.')
-      }
-      if (linkCode !== sessionLinkCode) {
-        throw new Error(
-          `You must open the magic link on the same device it was created from for security reasons. Please request a new link.`
-        )
-      }
-    }
-
-    if (typeof linkCreationTime !== 'number') {
-      throw new TypeError('Sign in link invalid. Please request a new one.')
-    }
-
-    const expirationTime = linkCreationTime + this.linkExpirationTime
-    if (Date.now() > expirationTime) {
-      throw new Error('Magic link expired. Please request a new one.')
-    }
-    const formData = new FormData()
-    Object.keys(form).forEach((key) => {
-      if (Array.isArray(form[key])) {
-        ;(form[key] as unknown[]).forEach((value) => {
-          formData.append(key, value as string | Blob)
-        })
-      } else {
-        formData.append(key, form[key] as string | Blob)
-      }
-    })
-    return { emailAddress, form: formData }
-  }
+  type ValidateEmailFunction = (email: string) => boolean | Promise<boolean>;
 }

@@ -1,65 +1,64 @@
 {
-  "name": "remix-auth-email-link",
+  "type": "module",
+  "sideEffects": false,
+  "name": "@nichtsam/remix-auth-email-link",
   "version": "2.1.1",
-  "main": "./build/index.js",
-  "types": "./build/index.d.ts",
-  "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "typecheck": "tsc --project tsconfig.json --noEmit",
-    "lint": "eslint . --fix --ignore-path .gitignore",
-    "format": "prettier --config .prettierrc --write --list-different --ignore-path .gitignore .",
-    "coverage": "yarn test -- --coverage",
-    "prepare": "husky install"
-  },
+  "license": "MIT",
   "keywords": [
     "remix",
     "remix-auth",
     "auth",
     "authentication",
-    "strategy"
+    "strategy",
+    "email"
   ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "quality": "biome check .",
+    "quality:fix": "biome check . --write --unsafe"
+  },
+  "files": ["build", "package.json", "README.md"],
+  "exports": {
+    ".": "./build/index.js",
+    "./package.json": "./package.json"
+  },
   "author": {
-    "name": "Bhanu Teja Pachipulusu",
-    "email": "pbteja1998@gmail.com",
-    "url": "https://github.com/pbteja1998"
+    "name": "Samuel Jensen",
+    "url": "https://nichtsam.com"
   },
-  "repository": {
-    "url": "https://github.com/pbteja1998/remix-auth-email-link",
-    "type": "git"
-  },
-  "license": "MIT",
-  "files": [
-    "build",
-    "package.json",
-    "README.md"
+  "contributors": [
+    {
+      "name": "Bhanu Teja Pachipulusu",
+      "email": "pbteja1998@gmail.com",
+      "url": "https://github.com/pbteja1998"
+    },
+    {
+      "name": "Samuel Jensen",
+      "url": "https://nichtsam.com"
+    }
   ],
-  "peerDependencies": {
-    "@remix-run/server-runtime": "^2.0.1",
-    "remix-auth": "^3.6.0"
+  "homepage": "https://github.com/nichtsam/remix-auth-email-link",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nichtsam/remix-auth-email-link"
   },
-  "devDependencies": {
-    "@remix-run/node": "^2.0.1",
-    "@remix-run/react": "^2.0.1",
-    "@remix-run/server-runtime": "^2.0.1",
-    "@types/crypto-js": "^4.1.0",
-    "@typescript-eslint/eslint-plugin": "^5.8.1",
-    "@typescript-eslint/parser": "^5.8.1",
-    "core-js-pure": "^3.33.0",
-    "eslint": "^8.5.0",
-    "eslint-config-galex": "^3.5.3",
-    "husky": ">=6",
-    "lint-staged": ">=12.1.4",
-    "prettier": "^2.5.1",
-    "react": "^18.0.2",
-    "remix-auth": "^3.6.0",
-    "ts-node": "^10.4.0",
-    "typescript": "^5.2.0"
+  "bugs": {
+    "url": "https://github.com/nichtsam/remix-auth-email-link/issues"
+  },
+  "peerDependencies": {
+    "remix-auth": "^4.0.0"
   },
   "dependencies": {
+    "@mjackson/headers": "^0.9.0",
     "crypto-js": "^4.2.0"
   },
-  "lint-staged": {
-    "*.{js,jsx,ts,tsx}": "yarn lint",
-    "*.{js,jsx,ts,tsx,css,json,md}": "yarn format"
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@total-typescript/tsconfig": "1.0.4",
+    "@types/crypto-js": "^4.1.0",
+    "@types/node": "^22.10.10",
+    "bun-types": "^1.2.0",
+    "typescript": "^5.2.0"
   }
 }
