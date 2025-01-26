@@ -2,7 +2,7 @@
   "type": "module",
   "sideEffects": false,
   "name": "@nichtsam/remix-auth-email-link",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "license": "MIT",
   "keywords": [
     "remix",
@@ -18,7 +18,11 @@
     "quality": "biome check .",
     "quality:fix": "biome check . --write --unsafe"
   },
-  "files": ["build", "package.json", "README.md"],
+  "files": [
+    "build",
+    "package.json",
+    "README.md"
+  ],
   "exports": {
     ".": "./build/index.js",
     "./package.json": "./package.json"
