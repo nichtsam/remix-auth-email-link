@@ -101,6 +101,10 @@ auth.use(
 
 Now you can proceed to create your routes and do the setup.
 
+> [!CAUTION] > `EmailLinkStrategy` throws a `Headers` object after the authentication process is initiated. This object contains a `"Set-Cookie header"` with the token. You should catch it, regardless of whether you use it or not. If `shouldValidateSessionMagicLink` is enabled, the token cookie must be set.
+>
+> While this design might initially appear suboptimal, it offers the flexibility to tailor your response logic to fit your specific needs.
+
 ```tsx
 // app/routes/login.tsx
 import { ActionArgs, LoaderArgs } from "@remix-run/node";
@@ -118,13 +122,18 @@ export let loader = async ({ request }: LoaderArgs) => {
 };
 
 export let action = async ({ request }: ActionArgs) => {
- // A `Headers` object containing the `Set-Cookie` header with the token will be thrown.
- // You need to catch this and decide whether to include the cookie in your response.
- // Note that the token cookie is required if `shouldValidateSessionMagicLink` is enabled.
- // While this approach might seem suboptimal, it provides flexibility in customizing your response logic.
-  const headers = await authenticator
-    .authenticate("email-link", request)
-    .catch((headers) => headers);
+  // A `Headers` object containing the `Set-Cookie` header with the token will be thrown.
+  // You need to catch this and decide whether to include the cookie in your response.
+
+  const headers = (await authenticator
+    .authenticate('email-link', request)
+    .catch((unknown) => {
+      if (unknown instanceof Headers) {
+        return unknown
+      }
+      throw unknown
+    })) as Headers
+
   throw redirect("/login", { headers });
 };
 
