@@ -15,7 +15,7 @@ export class EmailLinkStrategy<User> extends Strategy<
 
   constructor(
     {
-      cookie = { name: NAME },
+      cookie = NAME,
       emailField = "email",
       shouldValidateSessionMagicLink = false,
       tokenKey = "token",
@@ -43,12 +43,12 @@ export class EmailLinkStrategy<User> extends Strategy<
     if (typeof this.options.cookie === "string") {
       return this.options.cookie || NAME;
     }
-    return this.options.cookie?.name ?? NAME;
+    return this.options.cookie.name || NAME;
   }
 
   private get cookieOptions() {
     if (typeof this.options.cookie !== "object") return {};
-    return this.options.cookie ?? {};
+    return this.options.cookie;
   }
 
   private async createMagicLink(email: string) {
@@ -59,12 +59,12 @@ export class EmailLinkStrategy<User> extends Strategy<
 
     const encrypted = await this.encrypt(JSON.stringify(payload));
     const url = new URL(this.options.magicEndpoint);
-    url.searchParams.set(this.options.tokenKey ?? "token", encrypted);
+    url.searchParams.set(this.options.tokenKey, encrypted);
     return { magicLink: url.toString(), token: encrypted };
   }
 
   private async sendToken(email: string): Promise<Headers> {
-    const valid = await this.options.validateEmail?.(email);
+    const valid = await this.options.validateEmail(email);
     if (!valid) {
       throw new Error("Email is invalid");
     }
@@ -79,10 +79,10 @@ export class EmailLinkStrategy<User> extends Strategy<
     const cookie = new SetCookie({
       name: this.cookieName,
       value: new URLSearchParams({
-        [this.options.tokenKey!]: token,
+        [this.options.tokenKey]: token,
       }).toString(),
       httpOnly: true,
-      maxAge: this.options.linkMaxAge!,
+      maxAge: this.options.linkMaxAge,
       path: "/",
       sameSite: "Lax",
       ...this.cookieOptions,
@@ -93,11 +93,11 @@ export class EmailLinkStrategy<User> extends Strategy<
 
   private async validateToken(request: Request) {
     const requestParams = new URL(request.url).searchParams;
-    if (!requestParams.has(this.options.tokenKey!)) {
+    if (!requestParams.has(this.options.tokenKey)) {
       throw new ReferenceError("Missing token on params.");
     }
 
-    const requestToken = requestParams.get(this.options.tokenKey!) ?? "";
+    const requestToken = requestParams.get(this.options.tokenKey) ?? "";
 
     let payload: {
       email: string;
@@ -129,7 +129,7 @@ export class EmailLinkStrategy<User> extends Strategy<
       }
     }
 
-    const expirationTime = payload.createdAt + this.options.linkMaxAge! * 1000;
+    const expirationTime = payload.createdAt + this.options.linkMaxAge * 1000;
     if (Date.now() > expirationTime) {
       throw new Error("Token expired. Please request a new one.");
     }
@@ -139,7 +139,7 @@ export class EmailLinkStrategy<User> extends Strategy<
 
   public async authenticate(request: Request): Promise<User> {
     const url = new URL(request.url);
-    const token = url.searchParams.get(this.options.tokenKey!);
+    const token = url.searchParams.get(this.options.tokenKey);
 
     if (!token) {
       const formData = await request.clone().formData();
@@ -219,7 +219,7 @@ export namespace EmailLinkStrategy {
     validateEmail?: ValidateEmailFunction;
     /**
      * The name the strategy will use to identity the token from the magic link.
-     * @default "auth:email-link:token"
+     * @default "token"
      */
     tokenKey?: string;
     /**
